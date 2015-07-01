@@ -1,9 +1,12 @@
 package org.infinispan.persistence.spi;
 
 import net.jcip.annotations.ThreadSafe;
+
+import org.infinispan.filter.CollectionKeyFilter;
 import org.infinispan.filter.KeyFilter;
 import org.infinispan.marshall.core.MarshalledEntry;
 
+import java.util.Collection;
 import java.util.concurrent.Executor;
 
 /**
@@ -47,8 +50,28 @@ public interface AdvancedCacheLoader<K, V> extends CacheLoader<K, V> {
    int size();
 
    /**
-    * Offers a callback to be invoked for parallel iteration over the entries in an external store. Implementors should
-    * be thread safe.
+    * Fetches all of the specified keys from storage. By default, this delegates to
+    * {@link #process(KeyFilter, CacheLoaderTask, Executor, boolean, boolean)} by wrapping the
+    * collection of keys in a {@link CollectionKeyFilter}. Some implementations will want to
+    * overwrite this implementation if there is a more efficient way to load multiple keys.
+    *
+    * @param keys
+    *           collection of keys to fetch from storage
+    * @param task
+    *           callback to be invoked in parallel for each stored entry that passes the filter
+    *           check
+    * @param executor
+    *           an external thread pool to be used for parallel iteration
+    */
+   default void loadAll(Collection<? extends K> keys,
+         CacheLoaderTask<K, V> task, Executor executor) {
+      process(new CollectionKeyFilter<>(keys, true), task, executor, true,
+            true);
+   }
+
+   /**
+    * Offers a callback to be invoked for parallel iteration over the entries in an external store.
+    * Implementors should be thread safe.
     */
    @ThreadSafe
    interface CacheLoaderTask<K, V> {

@@ -3,6 +3,8 @@ package org.infinispan.interceptors;
 import static org.infinispan.persistence.PersistenceUtil.convert;
 
 import java.util.Collection;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -110,8 +112,20 @@ public class CacheLoaderInterceptor extends JmxStatsCommandInterceptor {
    @Override
    public Object visitGetAllCommand(InvocationContext ctx, GetAllCommand command) throws Throwable {
       if (enabled) {
-         for (Object key : command.getKeys()) {
-            loadIfNeeded(ctx, key, command);
+         Map<Object, Boolean> isLoaded = new HashMap<>();
+         Collection<InternalCacheEntry> results = PersistenceUtil
+               .loadAndStoreInDataContainer(dataContainer, persistenceManager,
+                     command.getKeys(), ctx, timeService, isLoaded);
+         for (InternalCacheEntry entry : results) {
+            Boolean isLoadedValue = isLoaded.get(entry.getKey());
+            CacheEntry wrappedEntry = wrapInternalCacheEntry(ctx,
+                  entry.getKey(), command, entry, false);
+            if (isLoadedValue != null && isLoadedValue.booleanValue()
+                  && wrappedEntry != null) {
+               recordLoadedEntry(ctx, entry.getKey(), wrappedEntry, entry,
+                     command);
+            }
+
          }
       }
       return invokeNextInterceptor(ctx, command);

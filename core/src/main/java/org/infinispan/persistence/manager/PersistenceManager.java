@@ -56,6 +56,9 @@ public interface PersistenceManager extends Lifecycle {
 
    MarshalledEntry loadFromAllStores(Object key, InvocationContext context);
 
+   Collection<MarshalledEntry> loadFromAllStores(Collection keys,
+         InvocationContext context);
+
    void writeToAllStores(MarshalledEntry marshalledEntry, AccessMode modes);
 
    /**

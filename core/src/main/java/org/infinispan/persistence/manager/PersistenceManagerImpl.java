@@ -56,6 +56,7 @@ import javax.transaction.TransactionManager;
 import java.util.*;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -439,6 +440,45 @@ public class PersistenceManagerImpl implements PersistenceManager {
                return load;
          }
          return null;
+      } finally {
+         storesMutex.readLock().unlock();
+      }
+   }
+
+   @Override
+   public Collection<MarshalledEntry> loadFromAllStores(Collection keys,
+         InvocationContext context) {
+      if (keys.isEmpty()) {
+         return Collections.emptyList();
+      }
+      storesMutex.readLock().lock();
+      try {
+         Collection<MarshalledEntry> entries = new LinkedBlockingDeque<>();
+         for (CacheLoader l : loaders) {
+            if (!context.isOriginLocal() && isLocalOnlyLoader(l)) {
+               continue;
+            }
+            if (AccessMode.BOTH.canPerform(configMap.get(l))
+                  && l instanceof AdvancedCacheLoader) {
+               ((AdvancedCacheLoader) l).loadAll(keys,
+                     new AdvancedCacheLoader.CacheLoaderTask() {
+
+                        @Override
+                        public void processEntry(
+                              MarshalledEntry marshalledEntry,
+                              AdvancedCacheLoader.TaskContext taskContext)
+                                    throws InterruptedException {
+                           entries.add(marshalledEntry);
+                        }
+                     }, persistenceExecutor);
+            } else {
+               // If the CacheLoader isn't an AdvancedCacheLoader, then load the keys individually
+               for (Object key : keys) {
+                  entries.add(l.load(key));
+               }
+            }
+         }
+         return entries;
       } finally {
          storesMutex.readLock().unlock();
       }

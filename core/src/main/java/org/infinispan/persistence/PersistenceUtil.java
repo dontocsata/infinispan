@@ -17,11 +17,15 @@ import org.infinispan.util.concurrent.WithinThreadExecutor;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 
 /**
  * @author Mircea Markus
@@ -111,6 +115,48 @@ public class PersistenceUtil {
       });
    }
 
+   public static <K, V> Collection<InternalCacheEntry<K, V>> loadAndStoreInDataContainer(
+         DataContainer<K, V> dataContainer,
+         final PersistenceManager persistenceManager, Collection<K> keys,
+         final InvocationContext ctx, final TimeService timeService,
+         final Map<Object, Boolean> isLoaded) {
+      Collection<InternalCacheEntry<K, V>> toRet = new ArrayList<>(keys.size());
+      Collection<K> keysToRetrieve = new ArrayList<>();
+      for (K key : keys) {
+         InternalCacheEntry<K, V> entry = dataContainer.get(key);
+         if (entry != null) {
+            toRet.add(entry);
+         } else {
+            keysToRetrieve.add(key);
+         }
+      }
+      Collection<MarshalledEntry> entries = loadAndCheckExpiration(
+            persistenceManager, keysToRetrieve, ctx, timeService);
+      for (MarshalledEntry entry : entries) {
+         dataContainer.compute((K) entry.getKey(),
+               new DataContainer.ComputeAction<K, V>() {
+
+                  @Override
+                  public InternalCacheEntry<K, V> compute(K key,
+                        InternalCacheEntry<K, V> oldEntry,
+                        InternalEntryFactory factory) {
+                     // under the lock, check if the entry exists in the DataContainer
+                     if (oldEntry != null) {
+                        isLoaded.put(key, false); // not loaded
+                        return oldEntry; // no changes in container
+                     }
+                     InternalCacheEntry<K, V> newEntry = convert(entry,
+                           factory);
+                     isLoaded.put(key, true); // loaded!
+                     toRet.add(newEntry);
+                     return newEntry;
+                  }
+               });
+      }
+
+      return toRet;
+   }
+
    public static MarshalledEntry loadAndCheckExpiration(PersistenceManager persistenceManager, Object key,
                                                         InvocationContext context, TimeService timeService) {
       final MarshalledEntry loaded = persistenceManager.loadFromAllStores(key, context);
@@ -125,6 +171,18 @@ public class PersistenceUtil {
          return null;
       }
       return loaded;
+   }
+
+   public static Collection<MarshalledEntry> loadAndCheckExpiration(
+         PersistenceManager persistenceManager, Collection keys,
+         InvocationContext context, TimeService timeService) {
+      Collection<MarshalledEntry> entries = persistenceManager
+            .loadFromAllStores(keys, context);
+      return entries.stream().filter(me -> {
+         InternalMetadata metadata = me.getMetadata();
+         return metadata == null
+               || !metadata.isExpired(timeService.wallClockTime());
+      }).collect(Collectors.toList());
    }
 
    public static <K, V> InternalCacheEntry<K, V> convert(MarshalledEntry<K, V> loaded, InternalEntryFactory factory) {
